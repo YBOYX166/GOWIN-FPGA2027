@@ -1,0 +1,33 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW5AT-138C" pn="GW5AT-LV138PG484AC1/I0">gw5at138c-007</Device>
+    <FileList>
+        <File path="src/DVP_Capture.v" type="file.verilog" enable="1"/>
+        <File path="src/camera_init.v" type="file.verilog" enable="1"/>
+        <File path="src/cmd_rx.v" type="file.verilog" enable="1"/>
+        <File path="src/div_seq.v" type="file.verilog" enable="1"/>
+        <File path="src/dpram_async.v" type="file.verilog" enable="1"/>
+        <File path="src/enc_report.v" type="file.verilog" enable="1"/>
+        <File path="src/encoder_reader.v" type="file.verilog" enable="1"/>
+        <File path="src/i2c_bit_shift.v" type="file.verilog" enable="1"/>
+        <File path="src/i2c_control.v" type="file.verilog" enable="1"/>
+        <File path="src/lcd_rgb_driver.v" type="file.verilog" enable="1"/>
+        <File path="src/mecanum_mixer.v" type="file.verilog" enable="1"/>
+        <File path="src/motor_channel.v" type="file.verilog" enable="1"/>
+        <File path="src/motor_demo.v" type="file.verilog" enable="1"/>
+        <File path="src/motor_quad.v" type="file.verilog" enable="1"/>
+        <File path="src/ov5640_init_table_rgb.v" type="file.verilog" enable="1"/>
+        <File path="src/pll.v" type="file.verilog" enable="1"/>
+        <File path="src/speed_pi.v" type="file.verilog" enable="1"/>
+        <File path="src/top.v" type="file.verilog" enable="1"/>
+        <File path="src/uart_rx.v" type="file.verilog" enable="1"/>
+        <File path="src/uart_tx.v" type="file.verilog" enable="1"/>
+        <File path="src/bx72.cst" type="file.cst" enable="1"/>
+        <File path="src/fpga_project.sdc" type="file.sdc" enable="1"/>
+        <File path="src/fpga_project.rao" type="file.gao" enable="0"/>
+        <File path="src/pnr_dual_purpose.tcl" type="file.other" enable="1"/>
+    </FileList>
+</Project>
