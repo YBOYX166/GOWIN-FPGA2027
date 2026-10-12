@@ -156,6 +156,24 @@ cd 4k
 
 **按键组合是严格校验的**：2 个键必须在不同轴上（`↑+←` 合法，`↑+↓` 置零），3 个及以上直接置零 —— 按错键只会停车，不会跑出意外方向。
 
+### IMU 姿态传感器 —— `fpga_project/tools/imu_gui.py`
+
+```bash
+/usr/bin/python3 fpga_project/tools/imu_gui.py
+```
+
+正点原子 ATK-MS901M / ATK-IMU901 角度传感器的上位机，4 个页签：
+
+| 页签 | 功能 |
+|---|---|
+| **姿态** | 人工地平仪（Roll/Pitch）+ 罗盘（Yaw）+ 全部数值 |
+| **波形** | 加速度 / 陀螺 / 磁力 三轴实时曲线（自动量程）|
+| **配置** | 波特率、回传速率、量程、算法、安装方向、LED、回传内容、通用寄存器读写、校准/保存/恢复 |
+| **数据** | CSV 记录 + 原始帧监视 |
+
+画面全部用 tkinter Canvas 手绘，**不需要 matplotlib / numpy**。
+协议整理见 [IMU_ATK_MS901M_PROTOCOL.md](fpga_project/IMU_ATK_MS901M_PROTOCOL.md)。
+
 ### 舵机臂调试 —— `4k/tools/servo_gui.py`
 
 ```bash
@@ -179,6 +197,7 @@ cd 4k
 | **电机驱动怎么调、PI 怎么整定** | [MOTOR_DRIVER.md](fpga_project/MOTOR_DRIVER.md) |
 | **某个引脚具体是什么** | [BX72管脚分配表V2.1.md](fpga_project/BX72管脚分配表V2.1.md) |
 | **速查管脚** | [PINOUT.md](fpga_project/PINOUT.md) |
+| **IMU（ATK-MS901M）串口协议** | [fpga_project/IMU_ATK_MS901M_PROTOCOL.md](fpga_project/IMU_ATK_MS901M_PROTOCOL.md) |
 | **4K 舵机工程的完整技术文档** | [4k/fpga_project/README.md](4k/fpga_project/README.md) |
 | **4K 怎么烧录、有哪些坑** | [4k/fs/README.md](4k/fs/README.md) |
 | **4K 工程的交接说明** | [4k/交接文档.md](4k/交接文档.md) |
@@ -189,6 +208,7 @@ cd 4k
 |---|---|
 | `PROJECT_INTERFACE.md` | 顶层端口、时钟复位、摄像头/LCD 接口、电机编码器链路、遥控协议 |
 | `MOTOR_DRIVER.md` | 数据通路、量纲换算、PI 整定步骤、安全特性、时序优化记录 |
+| `IMU_ATK_MS901M_PROTOCOL.md` | 角度传感器通信帧格式、6 种上传帧布局、全部寄存器、单位换算 |
 | `PINOUT.md` | 管脚速查 |
 | `BX72接线说明.md` | 连接器总览、摄像头座、LCD 排针、电机排针、空闲资源 |
 | `BX72管脚分配表V2.1.md` | 从厂商 .cst 和 xlsx 对齐整理的完整管脚表（413 行）|
