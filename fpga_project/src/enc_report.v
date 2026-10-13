@@ -119,7 +119,7 @@ module enc_report #(
 
     // ---------------- 主状态机 ----------------
     integer i;
-    reg [16:0] mag17;
+    reg [15:0] mag16;
 
     always @(posedge Clk or negedge Rst_n) begin
         if (!Rst_n) begin
@@ -136,10 +136,19 @@ module enc_report #(
                     if (tick) begin
                         for (i = 0; i < 4; i = i + 1) begin
                             neg[i] <= spd[i*16 + 15];
-                            mag17 = spd[i*16 + 15] ? (~spd[i*16 +: 16] + 16'd1)
-                                                   :  spd[i*16 +: 16];
-                            vmag[i*16 +: 16] <= (mag17 > 17'd32767) ? 16'd32767
-                                                                    : mag17[15:0];
+                            // 先在 16 位无符号域内求绝对值，再扩展到 vmag。
+                            // 不能把 16 位补码表达式直接赋给更宽的 mag：
+                            // 负数会先被零扩展，-2200 会错误变成 65536-2200。
+                            if (spd[i*16 + 15]) begin
+                                // -32768 无法在 16 位有符号数中表示绝对值，
+                                // 上报协议统一限幅到 32767。
+                                mag16 = (spd[i*16 +: 16] == 16'h8000) ?
+                                        16'd32767 : (~spd[i*16 +: 16] + 16'd1);
+                            end else begin
+                                mag16 = spd[i*16 +: 16];
+                            end
+                            vmag[i*16 +: 16] <= (mag16 > 16'd32767) ?
+                                                16'd32767 : mag16;
                         end
                         ch <= 2'd0;
                         k  <= 3'd0;

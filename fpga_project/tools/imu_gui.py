@@ -390,6 +390,17 @@ class App:
         self.wave = {k: [] for k in ("ax", "ay", "az", "gx", "gy", "gz", "mx", "my", "mz")}
         self.wave_mode = "acc"     # acc / gyro / mag
 
+        # ---- 陀螺仪零偏校准 ----
+        #   零偏 = 静止时陀螺仪的输出均值。理想是 0，实际上都有几十 LSB 的
+        #   固定偏差，会随温度漂。软件扣掉它，短时间的角度积分才不会乱跑。
+        self.gyro_bias = [0.0, 0.0, 0.0]      # 扣掉的零偏（dps）
+        self.calibrating = False
+        self.cal_t0 = 0.0
+        self.cal_dur = 3.0
+        self.cal_buf = []                      # [(gx,gy,gz), ...] 原始 dps
+        self.cal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "imu_gyro_cal.json")
+
         # 记录
         self.recording = False
         self.rec_file = None
@@ -470,6 +481,11 @@ class App:
         self.root.after(300, self.read_all)
 
     def disconnect(self):
+        if self.calibrating:
+            self.calibrating = False
+            self.btn_cal.config(text="开始校准")
+            self.cal_bar["value"] = 0
+            self._cal_ui("校准中断（串口断开）", "#ff5f56")
         if self.link:
             try:
                 self.link.close()
@@ -509,6 +525,41 @@ class App:
         self.cv_cp = tk.Canvas(left, width=260, height=120, bg="#111116",
                                highlightthickness=0)
         self.cv_cp.pack()
+
+        # ---- 陀螺仪零偏校准面板 ----
+        cal = ttk.LabelFrame(left, text="陀螺仪零偏校准", padding=(8, 4))
+        cal.pack(fill="x", pady=(8, 0))
+        r0 = ttk.Frame(cal); r0.pack(fill="x")
+        ttk.Label(r0, text="采样").pack(side="left")
+        self.cal_dur_var = tk.StringVar(value="3.0")
+        ttk.Combobox(r0, textvariable=self.cal_dur_var, width=5, takefocus=False,
+                     values=["1.0", "2.0", "3.0", "5.0", "10.0"]).pack(side="left", padx=2)
+        ttk.Label(r0, text="秒").pack(side="left")
+        self.btn_cal = ttk.Button(r0, text="开始校准", width=9, takefocus=False,
+                                  command=self.toggle_cal)
+        self.btn_cal.pack(side="left", padx=4)
+
+        r1 = ttk.Frame(cal); r1.pack(fill="x", pady=(2, 0))
+        ttk.Button(r1, text="清除", width=6, takefocus=False,
+                   command=self.clear_cal).pack(side="left")
+        ttk.Button(r1, text="存盘", width=6, takefocus=False,
+                   command=self.save_cal).pack(side="left", padx=2)
+        ttk.Button(r1, text="载入", width=6, takefocus=False,
+                   command=self.load_cal).pack(side="left")
+        ttk.Button(r1, text="写回模块", width=10, takefocus=False,
+                   command=self.send_module_cal).pack(side="left", padx=4)
+
+        self.cal_bar = ttk.Progressbar(cal, mode="determinate", maximum=100)
+        self.cal_bar.pack(fill="x", pady=(4, 2))
+        self.cal_state = ttk.Label(cal, text="未校准", foreground="#888",
+                                   wraplength=240, justify="left")
+        self.cal_state.pack(anchor="w")
+        self.cal_bias_lab = ttk.Label(cal, text="零偏  X —  Y —  Z —",
+                                      font=("Menlo", 9), foreground="#888")
+        self.cal_bias_lab.pack(anchor="w")
+        self.cal_noise_lab = ttk.Label(cal, text="噪声  X —  Y —  Z —",
+                                       font=("Menlo", 9), foreground="#888")
+        self.cal_noise_lab.pack(anchor="w")
 
         right = ttk.Frame(f); right.pack(side="left", fill="both", expand=True,
                                          padx=(8, 8), pady=8)
@@ -792,8 +843,17 @@ class App:
             if t == "attitude":
                 self.d_att = d
             elif t == "imu":
+                # ---- 校准采样：存的是**未扣零偏**的原始 dps ----
+                if self.calibrating:
+                    self.cal_buf.append((d["gx"], d["gy"], d["gz"]))
+                # ---- 扣零偏：GX/GY/GZ 从此是"修正后"的值 ----
+                d["gx_raw"], d["gy_raw"], d["gz_raw"] = d["gx"], d["gy"], d["gz"]
+                d["ax_raw"], d["ay_raw"], d["az_raw"] = d["ax"], d["ay"], d["az"]
+                d["gx"] -= self.gyro_bias[0]
+                d["gy"] -= self.gyro_bias[1]
+                d["gz"] -= self.gyro_bias[2]
                 self.d_imu = d
-                # 波形缓冲
+                # 波形缓冲（用修正后的值，曲线才在 0 附近）
                 for k in ("ax", "ay", "az", "gx", "gy", "gz"):
                     buf = self.wave[k]; buf.append(d[k])
                     if len(buf) > WAVE_N:
@@ -855,6 +915,16 @@ class App:
     # 六、界面刷新
     # =================================================================
     def _refresh(self):
+        # ---- 校准进度（到点自动收尾）----
+        if self.calibrating:
+            el = time.time() - self.cal_t0
+            self.cal_bar["value"] = min(100.0, el / self.cal_dur * 100.0)
+            if el >= self.cal_dur:
+                self._finish_cal()
+            else:
+                self._cal_ui("采样中… %.1f / %.1f 秒（已收 %d 个样本）"
+                             % (el, self.cal_dur, len(self.cal_buf)), "#c9a227")
+
         # ---- 数值面板 ----
         def setv(key, val, fmt="%.2f"):
             lab = self.vals.get(key)
@@ -1079,9 +1149,12 @@ class App:
             try:
                 self.rec_file = open(p, "w", newline="", encoding="utf-8")
                 self.rec_writer = csv.writer(self.rec_file)
+                # 陀螺/加计同时记录"修正后"和"原始"两组：
+                #   修正后用来直接用，原始用来事后分析零偏漂移
                 self.rec_writer.writerow(
                     ["t", "roll", "pitch", "yaw",
                      "ax", "ay", "az", "gx", "gy", "gz",
+                     "ax_raw", "ay_raw", "az_raw", "gx_raw", "gy_raw", "gz_raw",
                      "mx", "my", "mz", "pressure", "altitude", "temp",
                      "q0", "q1", "q2", "q3"])
                 self.rec_path = p
@@ -1101,6 +1174,8 @@ class App:
                 a.get("roll", ""), a.get("pitch", ""), a.get("yaw", ""),
                 i.get("ax", ""), i.get("ay", ""), i.get("az", ""),
                 i.get("gx", ""), i.get("gy", ""), i.get("gz", ""),
+                i.get("ax_raw", ""), i.get("ay_raw", ""), i.get("az_raw", ""),
+                i.get("gx_raw", ""), i.get("gy_raw", ""), i.get("gz_raw", ""),
                 m.get("mx", ""), m.get("my", ""), m.get("mz", ""),
                 b.get("pressure", ""), b.get("altitude", ""),
                 m.get("mtemp", b.get("btemp", "")),
@@ -1132,6 +1207,167 @@ class App:
     def _log(self, text, tag="sys"):
         self._cfg_log(text)
         self._raw_line(text, tag)
+
+    # =================================================================
+    # 八、陀螺仪零偏校准
+    #
+    # 原理：陀螺仪静止时输出应该恒为 0，实际上每轴都有一个固定偏差
+    #   （几十 LSB，还会随温度漂）。这个偏差如果不去掉，对角速度做积分
+    #   算角度时会**越积越歪** —— 所以必须先测出来扣掉。
+    #
+    # 做法：让用户保持静止，采 N 秒，每轴取平均就是零偏。
+    #
+    # 关键点：**必须自动判断采样期间设备有没有动**。
+    #   如果边晃边采，算出来的"零偏"里混进了真实转动，越校越歪。
+    #   所以同时算标准差 —— 标准差大就说明在动，直接判失败并拒绝写入。
+    # =================================================================
+    # 阈值怎么定：手拿着晃是几十~几百 dps，放桌上静止通常 < 1 dps，
+    # 中间有很大的空档，所以 3.0 既不误杀也不会放过真实的晃动。
+    NOISE_MAX = 3.0      # 每轴标准差超过这个值(dps)就认为"采样期间在动"
+    BIAS_MAX  = 50.0     # 零偏绝对值超过这个值(dps)就认为数据异常
+    CAL_MIN_N = 30       # 至少要有这么多个样本才算数
+
+    def toggle_cal(self):
+        if self.calibrating:
+            self._finish_cal()          # 手动提前结束
+            return
+        if not (self.link and self.link.alive):
+            self._log("先连接串口再校准", "err"); return
+        if self.d_imu is None:
+            self._log("还没收到加速度/陀螺帧，无法校准", "err"); return
+        try:
+            self.cal_dur = max(0.5, float(self.cal_dur_var.get()))
+        except Exception:
+            self.cal_dur = 3.0
+        self.cal_buf = []
+        self.calibrating = True
+        self.cal_t0 = time.time()
+        self.btn_cal.config(text="■ 停止")
+        self._cal_ui("采样中… 请保持模块完全静止", "#c9a227")
+        self._log("开始陀螺仪校准：采样 %.1f 秒，请保持静止" % self.cal_dur, "sys")
+
+    def _finish_cal(self):
+        self.calibrating = False
+        self.btn_cal.config(text="开始校准")
+        self.cal_bar["value"] = 0
+        buf = self.cal_buf
+        n = len(buf)
+        if n < self.CAL_MIN_N:
+            self._cal_ui("样本太少（%d 个），校准失败" % n, "#ff5f56")
+            self._log("校准失败：只收到 %d 个样本" % n, "err"); return
+
+        # 每轴：均值 = 零偏，标准差 = 噪声
+        bias, std = [], []
+        for i in range(3):
+            col = [v[i] for v in buf]
+            m = sum(col) / n
+            var = sum((x - m) ** 2 for x in col) / n
+            bias.append(m); std.append(var ** 0.5)
+
+        nmax = max(std)
+        bmax = max(abs(x) for x in bias)
+
+        # ---- 自动判定 ----
+        if nmax > self.NOISE_MAX:
+            self._cal_ui("❌ 采样期间模块在动（噪声 %.1f dps，阈值 %.1f）\n"
+                         "请放稳后重试 —— 边晃边校会把转动当成零偏"
+                         % (nmax, self.NOISE_MAX), "#ff5f56")
+            self._log("校准失败：噪声 %.2f dps 超阈值 %.1f，模块没静止"
+                      % (nmax, self.NOISE_MAX), "err")
+            self._show_cal_nums(bias, std)
+            return
+        if bmax > self.BIAS_MAX:
+            self._cal_ui("❌ 零偏异常大（%.1f dps，阈值 %.1f）\n"
+                         "可能是量程设置不对，或模块有问题"
+                         % (bmax, self.BIAS_MAX), "#ff5f56")
+            self._log("校准失败：零偏 %.2f dps 超阈值 %.1f" % (bmax, self.BIAS_MAX), "err")
+            self._show_cal_nums(bias, std)
+            return
+
+        # ---- 通过 ----
+        self.gyro_bias = bias
+        self._show_cal_nums(bias, std)
+        self._cal_ui("✅ 校准完成（%d 个样本，%.1f 秒）\n已生效：显示/波形/记录都会扣掉零偏"
+                     % (n, self.cal_dur), "#3a3")
+        self._log("✅ 陀螺仪校准完成：零偏 X=%+.3f Y=%+.3f Z=%+.3f dps，"
+                  "噪声 %.3f/%.3f/%.3f dps，样本 %d"
+                  % (bias[0], bias[1], bias[2], std[0], std[1], std[2], n), "sys")
+        self.save_cal(quiet=True)
+
+    def _show_cal_nums(self, bias, std):
+        self.cal_bias_lab.config(
+            text="零偏  X %+.3f  Y %+.3f  Z %+.3f  dps" % tuple(bias),
+            foreground="#ddd")
+        self.cal_noise_lab.config(
+            text="噪声  X %.3f  Y %.3f  Z %.3f  dps" % tuple(std),
+            foreground="#63e06a" if max(std) <= self.NOISE_MAX else "#ff5f56")
+
+    def _cal_ui(self, text, color):
+        self.cal_state.config(text=text, foreground=color)
+
+    def clear_cal(self):
+        self.gyro_bias = [0.0, 0.0, 0.0]
+        self.cal_buf = []
+        self.calibrating = False
+        self.btn_cal.config(text="开始校准")
+        self.cal_bar["value"] = 0
+        self._cal_ui("未校准（零偏已清零）", "#888")
+        self.cal_bias_lab.config(text="零偏  X —  Y —  Z —", foreground="#888")
+        self.cal_noise_lab.config(text="噪声  X —  Y —  Z —", foreground="#888")
+        self._log("已清除陀螺仪零偏校正", "sys")
+
+    def save_cal(self, quiet=False):
+        import json
+        if not any(self.gyro_bias):
+            if not quiet:
+                self._log("零偏全是 0，没什么可存的", "err")
+            return
+        try:
+            with open(self.cal_path, "w", encoding="utf-8") as fp:
+                json.dump({"bias": self.gyro_bias,
+                           "saved": time.strftime("%Y-%m-%d %H:%M:%S")}, fp, indent=1)
+            if not quiet:
+                self._log("零偏已存到 %s" % os.path.basename(self.cal_path), "sys")
+        except Exception as e:
+            self._log("存盘失败：%s" % e, "err")
+
+    def load_cal(self):
+        import json
+        if not os.path.exists(self.cal_path):
+            self._log("还没有存过零偏文件", "err"); return
+        try:
+            with open(self.cal_path, encoding="utf-8") as fp:
+                d = json.load(fp)
+            b = [float(x) for x in d["bias"]]
+            assert len(b) == 3
+        except Exception as e:
+            self._log("载入失败：%s" % e, "err"); return
+        self.gyro_bias = b
+        self._show_cal_nums(b, [0, 0, 0])
+        self.cal_noise_lab.config(text="噪声  —（来自存档，非本次实测）", foreground="#888")
+        self._cal_ui("已载入存档零偏（%s）" % d.get("saved", "?"), "#7aa2f7")
+        self._log("已载入零偏 X=%+.3f Y=%+.3f Z=%+.3f dps" % tuple(b), "sys")
+
+    def send_module_cal(self):
+        """让模块自己做一次内部校准（写 0x01 寄存器）。
+
+        和上面的软件零偏是两回事：
+          软件零偏 —— 只影响本上位机显示，不动模块
+          模块校准 —— 模块内部重新标定，会改变它之后上传的数据，
+                      想让结果持久还要再点「保存到 Flash」
+        """
+        if not (self.link and self.link.alive):
+            self._log("未连接串口", "err"); return
+        if not messagebox.askyesno(
+                "模块内部校准",
+                "这会通知模块自己做一次传感器校准。\n\n"
+                "· 校准时模块必须保持静止\n"
+                "· 校准只影响模块，和本软件的零偏是两回事\n"
+                "· 想断电保留，校准后还要点「保存到 Flash」\n\n"
+                "继续吗？"):
+            return
+        self.write_reg(REG_SENCAL)
+        self._log("已发送模块内部校准指令（静止几秒后再保存到 Flash）", "sys")
 
     # =================================================================
     def on_close(self):

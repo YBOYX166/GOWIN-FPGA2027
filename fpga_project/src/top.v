@@ -271,8 +271,38 @@ module top (
     wire signed [15:0] src_w  = CTRL_SRC_UART ? cmd_w  : demo_w;
 
     wire signed [15:0] spd_fl, spd_fr, spd_rl, spd_rr;
+    // =====================================================================
+    // 【方向修正开关】—— 接线/电机极性不对时在这里改，不用重新焊线
+    //
+    //   怎么判断该改哪个？把车架空（轮子悬空），用上位机发单个方向，
+    //   看四个轮子的**实际转向**，然后对下表：
+    //
+    //   现象                                  要设的开关
+    //   ─────────────────────────────────────────────────────────
+    //   前进变后退                             INV_VX = 1
+    //   左移变右移                             INV_VY = 1
+    //   左转变右转                             INV_W  = 1
+    //   以上全部反过来（整个镜像了）            INV_VX/INV_VY/INV_W 全设 1
+    //                                          等价于 INV_WHEEL = 4'b1111
+    //   只有某一个轮子转反了                   INV_WHEEL 对应位置 1
+    //                                          轮0=左前 bit0 … 轮3=右后 bit3
+    //
+    //   ⚠️ 注意：纯前进时四轮指令完全相同，所以**"前后轮接反"不会导致
+    //      前进变后退** —— 那种情况是横移和自转会反，不是前后。
+    //      如果前进变后退，一定是电机 +/- 极性反了。
+    // =====================================================================
+    localparam INV_VX     = 0;            // 前后反向
+    localparam INV_VY     = 0;            // 左右反向
+    localparam INV_W      = 0;            // 自转反向
+    localparam [3:0] INV_WHEEL = 4'b0000; // 逐轮反向（见上表）
+
+    wire signed [15:0] mix_vx = INV_VX ? -src_vx : src_vx;
+    wire signed [15:0] mix_vy = INV_VY ? -src_vy : src_vy;
+    wire signed [15:0] mix_w  = INV_W  ? -src_w  : src_w;
+
     mecanum_mixer #(
-        .OUT_MAX    (1000),
+        .OUT_MAX      (1000),
+        .INVERT_WHEEL (INV_WHEEL),
         // K_GAIN/2^GAIN_SHIFT = 1024/1024 = 1.0 -> kw 就等于 w，
         // 也就是教科书公式:  FL=vx-vy-w  FR=vx+vy+w  RL=vx+vy-w  RR=vx-vy+w
         // 这样 vx/vy/w 三者量纲一致，"转 600" 和 "走 600" 一样快。
@@ -282,9 +312,9 @@ module top (
     ) u_mixer (
         .Clk    (Clk),
         .Rst_n  (por_n),
-        .vx     (src_vx),
-        .vy     (src_vy),
-        .w      (src_w),
+        .vx     (mix_vx),
+        .vy     (mix_vy),
+        .w      (mix_w),
         .spd_fl (spd_fl),
         .spd_fr (spd_fr),
         .spd_rl (spd_rl),
@@ -304,6 +334,8 @@ module top (
         .PWM_FREQ         (20_000),
         .SPEED_MAX        (1000),
         .GATE_MS          (10),
+        // S0 和 S3 的编码器相序与另外两路相反，统一交换这两路正负号。
+        .DIR_SWAP         (4'b1001),
         .CLOSED_LOOP      (0),
         .IFACE_TB6612     (MOTOR_IFACE),
         // 速度 0 时刹车（不是滑行）：轮子锁死、斜坡不溜车，

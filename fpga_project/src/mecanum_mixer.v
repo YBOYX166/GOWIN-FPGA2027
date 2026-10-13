@@ -36,7 +36,13 @@ module mecanum_mixer #(
     // 等效增益 = K_GAIN / 2^GAIN_SHIFT
     // 默认 307/1024 = 0.29980，和原来的 300/1000 = 0.30000 只差 0.065%
     parameter K_GAIN    = 307,
-    parameter GAIN_SHIFT = 10
+    parameter GAIN_SHIFT = 10,
+    // ---- 逐轮输出反向（修接线用）----
+    //   bit0=轮0(左前) bit1=轮1(右前) bit2=轮2(左后) bit3=轮3(右后)
+    //   某个轮子的 +/- 接反了，就把对应的位置 1，不用重新焊线。
+    //   四个全接反（整车反着跑）就填 4'b1111。
+    //   诊断方法见 top.v 的 INV_* 说明。
+    parameter [3:0] INVERT_WHEEL = 4'b0000
 ) (
     input  wire                      Clk,
     input  wire                      Rst_n,
@@ -104,10 +110,12 @@ module mecanum_mixer #(
             spd_rl <= 16'sd0;
             spd_rr <= 16'sd0;
         end else begin
-            spd_fl <= clamp(raw_fl);
-            spd_fr <= clamp(raw_fr);
-            spd_rl <= clamp(raw_rl);
-            spd_rr <= clamp(raw_rr);
+            // INVERT_WHEEL 的对应位置 1 就把该轮取反（取反后再限幅，
+            // 所以 -(-1000) 也不会溢出）
+            spd_fl <= clamp(INVERT_WHEEL[0] ? -raw_fl : raw_fl);
+            spd_fr <= clamp(INVERT_WHEEL[1] ? -raw_fr : raw_fr);
+            spd_rl <= clamp(INVERT_WHEEL[2] ? -raw_rl : raw_rl);
+            spd_rr <= clamp(INVERT_WHEEL[3] ? -raw_rr : raw_rr);
         end
     end
 

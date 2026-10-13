@@ -38,9 +38,14 @@ module encoder_reader #(
 
     // ---------------- A/B 同步 ----------------
     reg [2:0] a_r, b_r;
-    always @(posedge Clk) begin
-        a_r <= {a_r[1:0], enc_a};
-        b_r <= {b_r[1:0], enc_b};
+    always @(posedge Clk or negedge Rst_n) begin
+        if (!Rst_n) begin
+            a_r <= 3'b000;
+            b_r <= 3'b000;
+        end else begin
+            a_r <= {a_r[1:0], enc_a};
+            b_r <= {b_r[1:0], enc_b};
+        end
     end
     wire a = a_r[2];
     wire b = b_r[2];
@@ -81,7 +86,10 @@ module encoder_reader #(
 
     // ---------------- 边沿检测（cnt 变化 = 有编码器边沿）----------------
     reg signed [31:0] cnt_d;
-    always @(posedge Clk) cnt_d <= cnt;
+    always @(posedge Clk or negedge Rst_n) begin
+        if (!Rst_n) cnt_d <= 32'sd0;
+        else        cnt_d <= cnt;
+    end
     wire enc_edge = (cnt != cnt_d);
 
     // ---------------- 微秒时间戳 ----------------

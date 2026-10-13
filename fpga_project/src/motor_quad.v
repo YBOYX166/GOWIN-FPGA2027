@@ -28,6 +28,8 @@ module motor_quad #(
     parameter PWM_FREQ         = 20_000,
     parameter SPEED_MAX        = 1000,
     parameter GATE_MS          = 10,
+    // 编码器方向修正：bit0..bit3 对应轮0..轮3；1 表示交换该路正负方向
+    parameter [3:0] DIR_SWAP    = 4'b0000,
     parameter CLOSED_LOOP      = 1,
     // 1 = TB6612FNG / DRV8833（PWM + IN1 + IN2 + STBY）
     // 0 = AT8236（IN1 / IN2 双 PWM，无独立 PWM 脚、无 STBY）
@@ -78,7 +80,8 @@ module motor_quad #(
 
             (* syn_preserve = 1 *) encoder_reader #(
                 .CLK_FREQ(CLK_FREQ),
-                .GATE_MS (GATE_MS)
+                .GATE_MS (GATE_MS),
+                .DIR_SWAP(DIR_SWAP[i])
             ) u_enc (
                 .Clk        (Clk),
                 .Rst_n      (Rst_n),
